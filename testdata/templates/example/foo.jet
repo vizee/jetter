@@ -1,0 +1,12 @@
+foo:
+num: {{ .num }}
+str: {{ quote(.str) }}
+obj: {{ .obj }}
+obj["c"]: {{ .obj["c"] }}
+arr: {{ .arr }}
+arr[1]: {{ .arr[1] }}
+file: {{ file(.cat.file) }}
+global.a: {{ global.a }}
+env.USER: {{ env.USER }}
+eval: {{ eval("{{ global.a }} - {{ .num }}", .) }}
+command ls: {{ command("/usr/bin/ls", "-lh") }}
