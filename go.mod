@@ -1,4 +1,4 @@
-module jetter
+module github.com/vizee/jetter
 
 go 1.22.0
 
