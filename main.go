@@ -147,6 +147,7 @@ func main() {
 			jetsSet.AddGlobalFunc("file", file(tmplRoot))
 			jetsSet.AddGlobalFunc("eval", eval(jetsSet))
 			jetsSet.AddGlobalFunc("command", command(unsafe))
+			jetsSet.AddGlobalFunc("loadcsv", loadcsv(tmplRoot))
 
 			wr, err := newWriter(output, sep, ext)
 			if err != nil {

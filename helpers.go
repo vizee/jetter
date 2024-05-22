@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,5 +77,55 @@ func command(unsafe bool) jet.Func {
 		}
 
 		return reflect.ValueOf(cmdOut.String())
+	}
+}
+
+func loadcsv(root string) func(args jet.Arguments) reflect.Value {
+	return func(args jet.Arguments) reflect.Value {
+		fname := args.Get(0).String()
+		if root != "" {
+			fname = filepath.Join(root, fname)
+		}
+		f, err := os.Open(fname)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "loadcsv: open file: %v\n", err)
+			return reflect.ValueOf([]map[string]string(nil))
+		}
+		defer f.Close()
+		rd := csv.NewReader(f)
+		rd.ReuseRecord = true
+
+		var (
+			records []map[string]string
+			header  []string
+		)
+		lineNo := 0
+		for {
+			record, err := rd.Read()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				fmt.Fprintf(os.Stderr, "loadcsv: read csv: %v\n", err)
+				return reflect.ValueOf([]map[string]string(nil))
+			}
+			lineNo++
+			if header == nil {
+				header = make([]string, len(record))
+				copy(header, record)
+				continue
+			}
+			if len(header) != len(record) {
+				fmt.Fprintf(os.Stderr, "loadcsv: invalid fields at record %d\n", lineNo)
+				return reflect.ValueOf([]map[string]string(nil))
+			}
+			m := make(map[string]string, len(header))
+			for i, k := range header {
+				m[k] = record[i]
+			}
+			records = append(records, m)
+		}
+
+		return reflect.ValueOf(records)
 	}
 }
