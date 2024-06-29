@@ -9,6 +9,6 @@ file: {{ file(.cat.file) }}
 global.a: {{ global.a }}
 env.USER: {{ env.USER }}
 eval: {{ eval("{{ global.a }} - {{ .num }}", .) }}
-command ls: {{ command("/usr/bin/ls", "-lh") }}
+command ls: disabled {* command("/usr/bin/ls", "-lh") *}
 loadcsv:{{ range _, rec := loadcsv("../public/person.csv") }}
-    person{ name={{ rec.name }} age={{ rec.age }} }{{end}}
+    person{ name={{ quote(rec.name) }} age={{ rec.age }} }{{end}}

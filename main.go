@@ -57,7 +57,11 @@ func collectJetFiles(dir string) ([]string, error) {
 			return err
 		}
 		if !d.IsDir() && strings.HasSuffix(path, ".jet") {
-			files = append(files, path[len(dir)+1:])
+			if strings.HasPrefix(path, dir) {
+				files = append(files, path[len(dir)+1:])
+			} else if dir == "." {
+				files = append(files, path)
+			}
 		}
 		return nil
 	})
@@ -66,6 +70,27 @@ func collectJetFiles(dir string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func searchJets(rootDir string, files []string) ([]string, error) {
+	fi, err := os.Stat(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	if fi.IsDir() {
+		if len(files) > 0 {
+			return files, nil
+		}
+		files, err := collectJetFiles(rootDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(files) == 0 {
+			return nil, fmt.Errorf("no jet files found in %s", rootDir)
+		}
+		return files, nil
+	}
+	return nil, fmt.Errorf("template root(%s) is not a directory", rootDir)
 }
 
 func printYaml(w io.Writer, obj any) {
@@ -80,7 +105,7 @@ func printYaml(w io.Writer, obj any) {
 
 func main() {
 	var (
-		tmplRoot    string
+		tmplBase    string
 		assigns     []string
 		valuesFile  string
 		output      string
@@ -97,7 +122,7 @@ func main() {
 		DisableAutoGenTag: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !debugValues {
-				return fmt.Errorf("Specify name")
+				return fmt.Errorf("specify name")
 			}
 
 			values, err := loadValues(valuesFile, assigns)
@@ -117,20 +142,10 @@ func main() {
 				return fmt.Errorf("Invalid name: %s", setName)
 			}
 
-			tmplDir := filepath.Join(tmplRoot, setName)
-
-			var jets []string
-			if len(args) > 1 {
-				jets = args[1:]
-			} else {
-				files, err := collectJetFiles(tmplDir)
-				if err != nil {
-					return err
-				}
-				if len(files) == 0 {
-					return fmt.Errorf("No jet files found in %s", tmplDir)
-				}
-				jets = files
+			tmplRoot := filepath.Join(tmplBase, setName)
+			jets, err := searchJets(tmplRoot, args[1:])
+			if err != nil {
+				return err
 			}
 
 			var opts []jet.Option
@@ -142,12 +157,12 @@ func main() {
 			default:
 				opts = append(opts, jet.WithSafeWriter(nil))
 			}
-			jetsSet := jet.NewSet(jet.NewOSFileSystemLoader(tmplDir), opts...)
+			jetsSet := jet.NewSet(jet.NewOSFileSystemLoader(tmplRoot), opts...)
 			jetsSet.AddGlobalFunc("quote", quote)
-			jetsSet.AddGlobalFunc("file", file(tmplRoot))
+			jetsSet.AddGlobalFunc("file", file(tmplBase))
 			jetsSet.AddGlobalFunc("eval", eval(jetsSet))
 			jetsSet.AddGlobalFunc("command", command(unsafe))
-			jetsSet.AddGlobalFunc("loadcsv", loadcsv(tmplRoot))
+			jetsSet.AddGlobalFunc("loadcsv", loadcsv(tmplBase))
 
 			wr, err := newWriter(output, sep, ext)
 			if err != nil {
@@ -158,9 +173,9 @@ func main() {
 			return renderJets(jetsSet, jets, values, wr)
 		},
 	}
-	appCmd.Flags().StringVarP(&tmplRoot, "dir", "d", ".", "templates directory")
+	appCmd.Flags().StringVarP(&tmplBase, "dir", "d", ".", "templates base directory")
 	appCmd.Flags().StringArrayVar(&assigns, "set", nil, "set value")
-	appCmd.Flags().StringVarP(&valuesFile, "values", "v", "./values.yaml", "values file")
+	appCmd.Flags().StringVarP(&valuesFile, "values", "v", "", "values file")
 	appCmd.Flags().StringVarP(&output, "output", "o", "-", "output")
 	appCmd.Flags().StringVar(&sep, "sep", "", "separator")
 	appCmd.Flags().StringVar(&safeWriter, "safe-writer", "", "html/js")

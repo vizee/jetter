@@ -1,2 +1,2 @@
 bar:
-{{ global.a = 123 }}
+set global.a to 123{{ global.a = 123 }}
