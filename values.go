@@ -2,12 +2,23 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+func printValues(w io.Writer, obj any) {
+	enc := yaml.NewEncoder(w)
+	defer enc.Close()
+	enc.SetIndent(2)
+	err := enc.Encode(obj)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func nextKeyField(key string) (string, bool, string) {
 	if len(key) > 0 && key[0] == '[' {

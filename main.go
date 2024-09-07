@@ -2,18 +2,16 @@ package main
 
 import (
 	"fmt"
-	"html/template"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/CloudyKit/jet/v6"
-	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	"github.com/spf13/pflag"
 )
 
 var globalVars = func() jet.VarMap {
@@ -93,97 +91,94 @@ func searchJets(rootDir string, files []string) ([]string, error) {
 	return nil, fmt.Errorf("template root(%s) is not a directory", rootDir)
 }
 
-func printYaml(w io.Writer, obj any) {
-	enc := yaml.NewEncoder(w)
-	defer enc.Close()
-	enc.SetIndent(2)
-	err := enc.Encode(obj)
+type appFlags struct {
+	tmplBase    string
+	assigns     []string
+	valuesFile  string
+	output      string
+	sep         string
+	safeWriter  string
+	ext         string
+	unsafe      bool
+	debugValues bool
+}
+
+func runJetter(flags *appFlags, args []string) error {
+	values, err := loadValues(flags.valuesFile, flags.assigns)
 	if err != nil {
-		panic(err)
+		return err
 	}
+
+	if flags.debugValues {
+		printValues(os.Stderr, values)
+	}
+
+	if len(args) == 0 {
+		return nil
+	}
+	setName := args[0]
+	if strings.Contains(setName, "..") {
+		return fmt.Errorf("Invalid name: %s", setName)
+	}
+
+	tmplRoot := filepath.Join(flags.tmplBase, setName)
+	jets, err := searchJets(tmplRoot, args[1:])
+	if err != nil {
+		return err
+	}
+
+	var opts []jet.Option
+	switch flags.safeWriter {
+	case "html":
+		opts = append(opts, jet.WithSafeWriter(template.HTMLEscape))
+	case "js":
+		opts = append(opts, jet.WithSafeWriter(template.JSEscape))
+	default:
+		opts = append(opts, jet.WithSafeWriter(nil))
+	}
+	jetsSet := jet.NewSet(jet.NewOSFileSystemLoader(tmplRoot), opts...)
+	jetsSet.AddGlobalFunc("quote", quote)
+	jetsSet.AddGlobalFunc("file", file(flags.tmplBase))
+	jetsSet.AddGlobalFunc("eval", eval(jetsSet))
+	jetsSet.AddGlobalFunc("command", command(flags.unsafe))
+	jetsSet.AddGlobalFunc("loadcsv", loadcsv(flags.tmplBase))
+
+	wr, err := newWriter(flags.output, flags.sep, flags.ext)
+	if err != nil {
+		return err
+	}
+	defer wr.Close()
+
+	return renderJets(jetsSet, jets, values, wr)
 }
 
 func main() {
 	var (
-		tmplBase    string
-		assigns     []string
-		valuesFile  string
-		output      string
-		sep         string
-		safeWriter  string
-		ext         string
-		unsafe      bool
-		debugValues bool
+		flags appFlags
 	)
-
-	appCmd := &cobra.Command{
-		Use:               "jetter [flags] name [file...]",
-		Short:             "Jet Templates Renderer",
-		DisableAutoGenTag: false,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 && !debugValues {
-				return fmt.Errorf("specify name")
-			}
-
-			values, err := loadValues(valuesFile, assigns)
-			if err != nil {
-				return err
-			}
-
-			if debugValues {
-				printYaml(os.Stderr, values)
-			}
-
-			if len(args) == 0 {
-				return nil
-			}
-			setName := args[0]
-			if strings.Contains(setName, "..") {
-				return fmt.Errorf("Invalid name: %s", setName)
-			}
-
-			tmplRoot := filepath.Join(tmplBase, setName)
-			jets, err := searchJets(tmplRoot, args[1:])
-			if err != nil {
-				return err
-			}
-
-			var opts []jet.Option
-			switch safeWriter {
-			case "html":
-				opts = append(opts, jet.WithSafeWriter(template.HTMLEscape))
-			case "js":
-				opts = append(opts, jet.WithSafeWriter(template.JSEscape))
-			default:
-				opts = append(opts, jet.WithSafeWriter(nil))
-			}
-			jetsSet := jet.NewSet(jet.NewOSFileSystemLoader(tmplRoot), opts...)
-			jetsSet.AddGlobalFunc("quote", quote)
-			jetsSet.AddGlobalFunc("file", file(tmplBase))
-			jetsSet.AddGlobalFunc("eval", eval(jetsSet))
-			jetsSet.AddGlobalFunc("command", command(unsafe))
-			jetsSet.AddGlobalFunc("loadcsv", loadcsv(tmplBase))
-
-			wr, err := newWriter(output, sep, ext)
-			if err != nil {
-				return err
-			}
-			defer wr.Close()
-
-			return renderJets(jetsSet, jets, values, wr)
-		},
+	pflag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage:\n  jetter [flags] base-dir [files...]\n\nFlags:\n")
+		pflag.PrintDefaults()
 	}
-	appCmd.Flags().StringVarP(&tmplBase, "dir", "d", ".", "templates base directory")
-	appCmd.Flags().StringArrayVar(&assigns, "set", nil, "set value")
-	appCmd.Flags().StringVarP(&valuesFile, "values", "v", "", "values file")
-	appCmd.Flags().StringVarP(&output, "output", "o", "-", "output")
-	appCmd.Flags().StringVar(&sep, "sep", "", "separator")
-	appCmd.Flags().StringVar(&safeWriter, "safe-writer", "", "html/js")
-	appCmd.Flags().StringVarP(&ext, "extension", "e", "", "rename extension")
-	appCmd.Flags().BoolVar(&unsafe, "unsafe", false, "unsafe function")
-	appCmd.Flags().BoolVar(&debugValues, "debug-values", false, "debug values")
-	err := appCmd.Execute()
+	pflag.StringVarP(&flags.tmplBase, "dir", "d", ".", "templates base directory")
+	pflag.StringArrayVar(&flags.assigns, "set", nil, "set value")
+	pflag.StringVarP(&flags.valuesFile, "values", "v", "", "values file")
+	pflag.StringVarP(&flags.output, "output", "o", "-", "output")
+	pflag.StringVar(&flags.sep, "sep", "", "separator")
+	pflag.StringVar(&flags.safeWriter, "safe-writer", "", "html/js")
+	pflag.StringVarP(&flags.ext, "extension", "e", "", "rename extension")
+	pflag.BoolVar(&flags.unsafe, "unsafe", false, "unsafe function")
+	pflag.BoolVar(&flags.debugValues, "debug-values", false, "debug values")
+	pflag.Parse()
+
+	if pflag.NArg() == 0 && !flags.debugValues {
+		pflag.Usage()
+		os.Exit(1)
+	}
+
+	err := runJetter(&flags, pflag.Args())
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }
